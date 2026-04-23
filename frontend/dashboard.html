@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StudySync — Dashboard</title>
+  <meta name="description" content="View and manage your study rooms on StudySync." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body class="app-page">
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <span class="logo-icon">📚</span>
+      <span class="logo-text">StudySync</span>
+    </div>
+
+    <div class="sidebar-user" id="sidebar-user">
+      <div class="avatar" id="user-avatar">?</div>
+      <span id="user-name">Loading...</span>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-label">MY ROOMS</div>
+      <ul class="room-list" id="sidebar-room-list">
+        <li class="room-item-skeleton"></li>
+        <li class="room-item-skeleton"></li>
+        <li class="room-item-skeleton"></li>
+      </ul>
+    </nav>
+
+    <button class="btn-logout" id="btn-logout" onclick="logout()">
+      <span>⬅</span> Logout
+    </button>
+  </aside>
+
+  <!-- Main content -->
+  <main class="main-content">
+    <header class="dashboard-header">
+      <div>
+        <h1 id="greeting">Good morning! 👋</h1>
+        <p class="subtitle">Here are your study rooms</p>
+      </div>
+      <div class="header-actions">
+        <button class="btn-secondary" id="btn-join-room" onclick="openJoinModal()">
+          🔗 Join Room
+        </button>
+        <button class="btn-primary" id="btn-create-room" onclick="openCreateModal()">
+          ＋ Create Room
+        </button>
+      </div>
+    </header>
+
+    <!-- Stats strip -->
+    <div class="stats-strip" id="stats-strip">
+      <div class="stat-card">
+        <div class="stat-number" id="stat-rooms">—</div>
+        <div class="stat-label">Rooms</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="stat-tasks">—</div>
+        <div class="stat-label">Tasks Done</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="stat-messages">—</div>
+        <div class="stat-label">Messages Sent</div>
+      </div>
+    </div>
+
+    <!-- Room cards grid -->
+    <div class="room-grid" id="room-grid">
+      <div class="empty-state hidden" id="empty-state">
+        <div class="empty-icon">🎓</div>
+        <h2>No rooms yet</h2>
+        <p>Create your first study room or join one with an invite code.</p>
+        <button class="btn-primary" onclick="openCreateModal()">＋ Create Room</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- Create Room Modal -->
+  <div class="modal-overlay hidden" id="modal-create" onclick="closeModal('modal-create')">
+    <div class="modal glass" onclick="event.stopPropagation()">
+      <h2>Create a Study Room</h2>
+      <form onsubmit="createRoom(event)">
+        <div class="form-group">
+          <label for="room-name">Room Name</label>
+          <input id="room-name" type="text" placeholder="e.g. Math Finals Prep" required />
+        </div>
+        <div class="form-group">
+          <label for="room-desc">Description (optional)</label>
+          <input id="room-desc" type="text" placeholder="What are you studying?" />
+        </div>
+        <div id="create-error" class="form-error hidden"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn-ghost" onclick="closeModal('modal-create')">Cancel</button>
+          <button type="submit" class="btn-primary" id="btn-create-submit">Create Room</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Join Room Modal -->
+  <div class="modal-overlay hidden" id="modal-join" onclick="closeModal('modal-join')">
+    <div class="modal glass" onclick="event.stopPropagation()">
+      <h2>Join a Study Room</h2>
+      <form onsubmit="joinRoom(event)">
+        <div class="form-group">
+          <label for="invite-code">Invite Code</label>
+          <input id="invite-code" type="text" placeholder="e.g. A1B2C3D4" required style="text-transform:uppercase" />
+        </div>
+        <div id="join-error" class="form-error hidden"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn-ghost" onclick="closeModal('modal-join')">Cancel</button>
+          <button type="submit" class="btn-primary">Join Room</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/assets/app.js"></script>
+  <script>
+    requireAuth();
+
+    const ROOM_COLORS = ['#6366f1','#8b5cf6','#ec4899','#f97316','#10b981','#06b6d4','#f59e0b','#ef4444'];
+    let rooms = [];
+
+    async function init() {
+      const user = getUser();
+      document.getElementById('user-name').textContent = user.username;
+      document.getElementById('user-avatar').textContent = user.username[0].toUpperCase();
+
+      const hour = new Date().getHours();
+      const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+      document.getElementById('greeting').textContent = `${greet}, ${user.username}! 👋`;
+
+      await loadRooms();
+    }
+
+    async function loadRooms() {
+      try {
+        rooms = await api('/api/rooms');
+        renderRooms();
+        renderSidebar();
+        document.getElementById('stat-rooms').textContent = rooms.length;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function renderRooms() {
+      const grid = document.getElementById('room-grid');
+      const empty = document.getElementById('empty-state');
+      grid.innerHTML = '';
+
+      if (rooms.length === 0) {
+        empty.classList.remove('hidden');
+        grid.appendChild(empty);
+        return;
+      }
+      empty.classList.add('hidden');
+
+      rooms.forEach((room, i) => {
+        const color = ROOM_COLORS[i % ROOM_COLORS.length];
+        const card = document.createElement('div');
+        card.className = 'room-card glass';
+        card.style.setProperty('--accent', color);
+        card.innerHTML = `
+          <div class="room-card-accent" style="background:${color}"></div>
+          <div class="room-card-body">
+            <div class="room-card-icon" style="background:${color}20;color:${color}">
+              ${room.name[0].toUpperCase()}
+            </div>
+            <div class="room-card-info">
+              <h3>${room.name}</h3>
+              <p>${room.description || 'No description'}</p>
+              <div class="room-card-meta">
+                <span class="invite-badge" title="Invite Code" onclick="copyCode('${room.invite_code}', event)">
+                  🔑 ${room.invite_code}
+                </span>
+              </div>
+            </div>
+          </div>
+          <button class="btn-enter" onclick="enterRoom(${room.id})">Enter Room →</button>
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    function renderSidebar() {
+      const list = document.getElementById('sidebar-room-list');
+      list.innerHTML = '';
+      rooms.forEach((room, i) => {
+        const color = ROOM_COLORS[i % ROOM_COLORS.length];
+        const li = document.createElement('li');
+        li.className = 'sidebar-room-item';
+        li.onclick = () => enterRoom(room.id);
+        li.innerHTML = `<span class="room-dot" style="background:${color}"></span>${room.name}`;
+        list.appendChild(li);
+      });
+    }
+
+    function copyCode(code, e) {
+      e.stopPropagation();
+      navigator.clipboard.writeText(code);
+      const el = e.target;
+      const orig = el.textContent;
+      el.textContent = '✅ Copied!';
+      setTimeout(() => el.textContent = orig, 1500);
+    }
+
+    function enterRoom(id) {
+      window.location.href = `/room?id=${id}`;
+    }
+
+    async function createRoom(e) {
+      e.preventDefault();
+      const errEl = document.getElementById('create-error');
+      errEl.classList.add('hidden');
+      try {
+        const room = await api('/api/rooms', 'POST', {
+          name: document.getElementById('room-name').value,
+          description: document.getElementById('room-desc').value,
+        });
+        closeModal('modal-create');
+        document.getElementById('room-name').value = '';
+        document.getElementById('room-desc').value = '';
+        await loadRooms();
+      } catch (err) {
+        errEl.textContent = err.message || 'Failed to create room';
+        errEl.classList.remove('hidden');
+      }
+    }
+
+    async function joinRoom(e) {
+      e.preventDefault();
+      const errEl = document.getElementById('join-error');
+      errEl.classList.add('hidden');
+      try {
+        const code = document.getElementById('invite-code').value.trim().toUpperCase();
+        const room = await api('/api/rooms/join-by-code', 'POST', { invite_code: code });
+        closeModal('modal-join');
+        document.getElementById('invite-code').value = '';
+        await loadRooms();
+        enterRoom(room.id);
+      } catch (err) {
+        errEl.textContent = err.message || 'Invalid invite code';
+        errEl.classList.remove('hidden');
+      }
+    }
+
+    function openCreateModal() { document.getElementById('modal-create').classList.remove('hidden'); }
+    function openJoinModal() { document.getElementById('modal-join').classList.remove('hidden'); }
+    function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+    init();
+  </script>
+</body>
+</html>

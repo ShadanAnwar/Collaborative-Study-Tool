@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StudySync — Room</title>
+  <meta name="description" content="Collaborate in your study room with kanban, chat, and file sharing." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body class="room-page">
+
+  <!-- Top Bar -->
+  <header class="room-topbar">
+    <div class="topbar-left">
+      <button class="btn-back" onclick="window.location.href='/dashboard'">← Back</button>
+      <div class="room-title-wrap">
+        <span class="logo-icon small">📚</span>
+        <h1 id="room-title">Loading...</h1>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="online-users" id="online-users"></div>
+      <div class="invite-chip" id="invite-chip" onclick="copyInvite()">
+        🔑 <span id="invite-code-display">...</span>
+      </div>
+      <div class="ws-status" id="ws-status" title="Connection status">●</div>
+    </div>
+  </header>
+
+  <!-- Three-panel layout -->
+  <div class="room-layout">
+
+    <!-- LEFT: Members + Files -->
+    <aside class="room-panel panel-left glass">
+
+      <section class="panel-section">
+        <div class="panel-section-header">
+          <h2>👥 Members</h2>
+        </div>
+        <ul class="member-list" id="member-list"></ul>
+      </section>
+
+      <section class="panel-section">
+        <div class="panel-section-header">
+          <h2>📁 Files</h2>
+          <label class="btn-upload" for="file-input" title="Upload file">＋</label>
+        </div>
+        <input type="file" id="file-input" style="display:none" onchange="uploadFile(event)" />
+        <ul class="file-list" id="file-list"></ul>
+        <p class="empty-hint" id="file-empty">No files yet — upload one!</p>
+      </section>
+
+    </aside>
+
+    <!-- CENTER: Kanban board -->
+    <main class="room-panel panel-center">
+      <div class="kanban-toolbar">
+        <form class="add-task-form" onsubmit="addTask(event)">
+          <input id="new-task-input" type="text" placeholder="＋ Add a task and press Enter…" />
+          <button type="submit" class="btn-primary small">Add</button>
+        </form>
+      </div>
+
+      <div class="kanban-board" id="kanban-board">
+        <div class="kanban-col" id="col-todo" data-status="todo">
+          <div class="col-header todo-header">
+            <span class="col-dot dot-todo"></span>
+            <span>To Do</span>
+            <span class="task-count" id="count-todo">0</span>
+          </div>
+          <div class="task-list" id="tasks-todo"
+            ondragover="onDragOver(event)" ondrop="onDrop(event,'todo')"></div>
+        </div>
+
+        <div class="kanban-col" id="col-inprogress" data-status="inprogress">
+          <div class="col-header inprogress-header">
+            <span class="col-dot dot-inprogress"></span>
+            <span>In Progress</span>
+            <span class="task-count" id="count-inprogress">0</span>
+          </div>
+          <div class="task-list" id="tasks-inprogress"
+            ondragover="onDragOver(event)" ondrop="onDrop(event,'inprogress')"></div>
+        </div>
+
+        <div class="kanban-col" id="col-done" data-status="done">
+          <div class="col-header done-header">
+            <span class="col-dot dot-done"></span>
+            <span>Done</span>
+            <span class="task-count" id="count-done">0</span>
+          </div>
+          <div class="task-list" id="tasks-done"
+            ondragover="onDragOver(event)" ondrop="onDrop(event,'done')"></div>
+        </div>
+      </div>
+    </main>
+
+    <!-- RIGHT: Chat -->
+    <aside class="room-panel panel-right glass">
+      <div class="chat-header">
+        <h2>💬 Room Chat</h2>
+      </div>
+      <div class="chat-messages" id="chat-messages">
+        <div class="chat-welcome">
+          <span>👋</span>
+          <p>Welcome to the room chat!</p>
+        </div>
+      </div>
+      <form class="chat-input-wrap" onsubmit="sendChat(event)">
+        <input id="chat-input" type="text" placeholder="Type a message…" autocomplete="off" />
+        <button type="submit" class="btn-send" id="btn-send">➤</button>
+      </form>
+    </aside>
+
+  </div>
+
+  <script src="/assets/app.js"></script>
+  <script src="/assets/kanban.js"></script>
+  <script src="/assets/chat.js"></script>
+  <script>
+    requireAuth();
+
+    const params = new URLSearchParams(window.location.search);
+    const ROOM_ID = parseInt(params.get('id'));
+    if (!ROOM_ID) window.location.href = '/dashboard';
+
+    const ME = getUser();
+    let roomData = null;
+    let members = [];
+    let tasks = [];
+    let ws = null;
+
+    async function init() {
+      try {
+        roomData = await api(`/api/rooms/${ROOM_ID}`);
+        document.title = `StudySync — ${roomData.name}`;
+        document.getElementById('room-title').textContent = roomData.name;
+        document.getElementById('invite-code-display').textContent = roomData.invite_code;
+
+        await Promise.all([loadMembers(), loadTasks(), loadFiles()]);
+        connectWS();
+      } catch (e) {
+        alert('Could not load room. Returning to dashboard.');
+        window.location.href = '/dashboard';
+      }
+    }
+
+    async function loadMembers() {
+      members = await api(`/api/rooms/${ROOM_ID}/members`);
+      renderMembers();
+    }
+
+    function renderMembers() {
+      const list = document.getElementById('member-list');
+      list.innerHTML = members.map(m => `
+        <li class="member-item" id="member-${m.user_id}">
+          <div class="member-avatar">${m.user.username[0].toUpperCase()}</div>
+          <div class="member-info">
+            <span class="member-name">${m.user.username}${m.user_id === ME.id ? ' (you)' : ''}</span>
+            <span class="member-role ${m.role}">${m.role}</span>
+          </div>
+          <span class="online-dot offline" id="dot-${m.user_id}" title="Offline"></span>
+        </li>
+      `).join('');
+    }
+
+    function updateOnlineUsers(onlineList) {
+      const onlineIds = onlineList.map(u => u.id);
+      const el = document.getElementById('online-users');
+      el.innerHTML = onlineList.map(u =>
+        `<div class="online-avatar" title="${u.username}">${u.username[0].toUpperCase()}</div>`
+      ).join('') + `<span class="online-count">${onlineList.length} online</span>`;
+
+      members.forEach(m => {
+        const dot = document.getElementById(`dot-${m.user_id}`);
+        if (dot) {
+          dot.className = `online-dot ${onlineIds.includes(m.user_id) ? 'online' : 'offline'}`;
+          dot.title = onlineIds.includes(m.user_id) ? 'Online' : 'Offline';
+        }
+      });
+    }
+
+    async function loadFiles() {
+      const files = await api(`/api/rooms/${ROOM_ID}/files`);
+      renderFiles(files);
+    }
+
+    function renderFiles(files) {
+      const list = document.getElementById('file-list');
+      const empty = document.getElementById('file-empty');
+      if (files.length === 0) {
+        list.innerHTML = '';
+        empty.style.display = 'block';
+        return;
+      }
+      empty.style.display = 'none';
+      list.innerHTML = files.map(f => `
+        <li class="file-item">
+          <span class="file-icon">${fileIcon(f.filename)}</span>
+          <span class="file-name" title="${f.filename}">${f.filename}</span>
+          <a class="btn-download" href="/api/files/${f.id}/download" download="${f.filename}" title="Download">⬇</a>
+        </li>
+      `).join('');
+    }
+
+    function fileIcon(name) {
+      const ext = name.split('.').pop().toLowerCase();
+      const icons = { pdf: '📄', jpg: '🖼', jpeg: '🖼', png: '🖼', gif: '🖼', mp4: '🎬', mp3: '🎵', zip: '📦', docx: '📝', doc: '📝', xlsx: '📊', pptx: '📊' };
+      return icons[ext] || '📎';
+    }
+
+    async function uploadFile(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+        const res = await fetch(`/api/rooms/${ROOM_ID}/files`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+          body: formData,
+        });
+        if (!res.ok) throw new Error('Upload failed');
+        await loadFiles();
+      } catch (err) {
+        alert(err.message);
+      }
+      e.target.value = '';
+    }
+
+    function copyInvite() {
+      navigator.clipboard.writeText(roomData.invite_code);
+      const el = document.getElementById('invite-chip');
+      el.classList.add('copied');
+      setTimeout(() => el.classList.remove('copied'), 1500);
+    }
+
+    init();
+  </script>
+</body>
+</html>
